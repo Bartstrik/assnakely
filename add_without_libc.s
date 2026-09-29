@@ -10,7 +10,7 @@ main:
 	# allocate memory [8 bytes for int64_t val, 8 bytes for the pointer argv*[1]]
 	pushq %rbp	
 	movq %rsp, %rbp
-	subq $16, %rsp
+	subq $32, %rsp
 
 	leaq 8(%rsi), %rdi 
 	movq %rdi, -8(%rbp) #-8(%rsp) contains argv*[1]
@@ -33,7 +33,7 @@ main:
 
 	# using bitoa:
 	movq -16(%rbp), %rdi
-	leaq -16(%rbp), %rsi		# reusing allocated stack as the string buffer
+	leaq -32(%rbp), %rsi		# reusing allocated stack as the string buffer
 	call bitoa
 
 	# sys_write 

@@ -8,6 +8,7 @@ Afterwards I wanted to use malloc for my integer to string function, but of cour
 TODO:
  - heap allocation using sys_brk
  - integer overflow/underflow detection batoi (if possible using cpu flags?) 
+ - Totally get rid of libc by switching to _start somehow
  - get started on snake
  - continually draw an arena
  - get keyboard input to work
