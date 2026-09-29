@@ -7,7 +7,7 @@ main:
 	cmpl 	$3, %edi
 	jne .Lmain_err
 
-	# allocate memory [8 bytes for ret, 8 bytes for the pointer argv*[1] and 8 for 16-bit allignment]
+	# allocate memory [8 bytes for int64_t val, 8 bytes for the pointer argv*[1]]
 	pushq %rbp	
 	movq %rsp, %rbp
 	subq $16, %rsp
@@ -33,6 +33,7 @@ main:
 
 	# using bitoa:
 	movq -16(%rbp), %rdi
+	leaq -16(%rbp), %rsi		# reusing allocated stack as the string buffer
 	call bitoa
 
 	# sys_write 
@@ -142,20 +143,18 @@ batoi:
 
 bitoa:
 	# rdi = int64_t	
+	# rsi = char* to address with min size of 21 bytes to store the string in
+	movq %rsi, %r11		# make sure we return the pointer to the string
+
 	# int64_t longest possible value = -9223372036854775808 so 20 chars are required + 1 for '\0', will be done on the stack (32 bytes total to ensure 16-byte allignment)
 	
 	# will attempt a method where we find the highest value of a * 10 ^ b and substitute that from the int
 	
-	pushq %rbp
-	movq %rsp, %rbp
-	subq $32, %rsp
-	movq %rsp, %rcx		# rcx holds char*	
-
 	# add a '-' and multiplies the int with -1 if negative
 	cmpq $0, %rdi
 	jge .Lbitoa1
-	movb $45, (%rcx)
-	addq $1, %rcx
+	movb $45, (%rsi)
+	addq $1, %rsi
 	imulq $-1, %rdi
 
 .Lbitoa1:
@@ -169,7 +168,7 @@ bitoa:
 	movq $0, %rdx	# set rdx to 0 for later divisions
 	
 .Lbitoa2:
-	cmpq %rax, %rdi		
+	cmpq %rax, %rdi		# multiply b by 10 if b <= rdi
 	jl .Lbitoa3
 	imulq $10, %rax		
 	jmp .Lbitoa2
@@ -178,13 +177,13 @@ bitoa:
 	cmpq $0, %rdi
 	je .Lbitoa5
 
-	movq $10, %r10
+	movq $10, %r10		#	devide b by 10 (check out divq docs, rdx:rax / 1st arg, with result in rax, leftover in rdx)
 	divq %r10
 	# found the highest order of the int, time to subtract the highest number
-	movq $0, %r9		# a = 1	
+	movq $0, %r9		# a = 0	
 
 .Lbitoa4:
-	addq $1, %r9
+	addq $1, %r9		# keep incrementing a by 1, then compute c each iteration and compare
 	movq %rax, %r8
 	imulq %r9, %r8
 	cmpq %r8, %rdi		# if rdi >= c {retry}
@@ -192,16 +191,15 @@ bitoa:
 						# else {
 	subq $1, %r9		# 	a--;
 	addb $48, %r9b
-	movb %r9b, (%rcx)	# 	*rcx = a;
-	addq $1, %rcx		# 	rcx++;
+	movb %r9b, (%rsi)	# 	*rsi = a;
+	addq $1, %rsi		# 	rsi++;
 
 	subq %rax, %r8		# 	decrease c by b (9000 -> 8000)
 	subq %r8, %rdi
 	jmp .Lbitoa3		# }
 	
 .Lbitoa5:
-	movb $0, (%rcx)		# *rcx = '\0'
-	movq %rsp, %rax
-
-	leave				# might cause segfault
+	movb $0, (%rsi)		# *rsi = '\0'
+	# return rax = char*
+	movq %r11, %rax
 	ret
