@@ -98,7 +98,7 @@ batoi:
 
 	subq $1, %rdi  	# str -= sizeof(char);
 
-	# // int64 max is 9223372036854775807 = 19 chars, beware that if '9' * 19 is inserted it will not return -1 but overflow ret.
+	# // int64 max is 9223372036854775807 = 19 chars, beware that if '9' * 19 is inserted it sys_exit
 
 	cmpb $19, %dl		# if (str_len > 19) return 0;
 	ja .Lbatoi_err
@@ -124,12 +124,14 @@ batoi:
 	cmp %ch, %dh
 	jae .Lbatoi5
 	imulq $10, %rsi
+	jo .Lbatoi_err		# overflow detection
 	addb $1, %dh
 	jmp .Lbatoi4
 	
 
 .Lbatoi5:
 	addq %rsi, %rax		# 	ret += add;
+	jo .Lbatoi_err		# overflow detection
 	addb $1, %ch		# 	count++;
 	subq $1, %rdi		# 	str -= sizeof(char);
 	jmp .Lbatoi3			# }
@@ -137,9 +139,11 @@ batoi:
 .Lbatoi_ret:
 	ret
 
-.Lbatoi_err: # error, return 0
-	movq $0, %rax
-	ret
+.Lbatoi_err:
+	# sys_exit return 2 for now, maybe return 1 as error code would be better
+	movq	$2,  %rdi
+	movq	$60, %rax
+	syscall
 
 bitoa:
 	# will fail if the integer >= 19 digits
@@ -173,6 +177,8 @@ bitoa:
 	cmpq %rax, %rdi		
 	jl .Lbitoa3
 	imulq $10, %rax		# multiply b by 10 if b <= rdi
+	jo .Lbitoa_err		# bit overflow detection
+
 	jmp .Lbitoa2
 
 .Lbitoa3:
@@ -226,3 +232,9 @@ bitoa:
 	# return rax = char*
 	movq %r11, %rax
 	ret
+
+.Lbitoa_err:
+	# sys_exit return 1 for now, maybe return 1 as error code would be better
+	movq	$1,  %rdi
+	movq	$60, %rax
+	syscall
