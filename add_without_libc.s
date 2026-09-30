@@ -142,6 +142,7 @@ batoi:
 	ret
 
 bitoa:
+	# will fail if the integer >= 19 digits
 	# rdi = int64_t	
 	# rsi = char* to address with min size of 21 bytes to store the string in
 	movq %rsi, %r11		# make sure we return the pointer to the string
@@ -166,18 +167,18 @@ bitoa:
 	# set b = 1, and finding the highest order of rdi by multiplying by 10 and comparing until b is bigger than rdi
 	movq $1, %rax
 	movq $0, %rdx	# set rdx to 0 for later divisions
-	
+	movq $10, %r10	# used for devide by 10, not allowed to use $10 with divq -_-
+
 .Lbitoa2:
-	cmpq %rax, %rdi		# multiply b by 10 if b <= rdi
+	cmpq %rax, %rdi		
 	jl .Lbitoa3
-	imulq $10, %rax		
+	imulq $10, %rax		# multiply b by 10 if b <= rdi
 	jmp .Lbitoa2
 
 .Lbitoa3:
 	cmpq $0, %rdi
 	je .Lbitoa5
 
-	movq $10, %r10		#	devide b by 10 (check out divq docs, rdx:rax / 1st arg, with result in rax, leftover in rdx)
 	divq %r10
 	# found the highest order of the int, time to subtract the highest number
 	movq $0, %r9		# a = 0	
@@ -199,6 +200,28 @@ bitoa:
 	jmp .Lbitoa3		# }
 	
 .Lbitoa5:
+	movq %r8, %rax # move c into rax, needed for devisions in .Lbitoa6
+
+.Lbitoa6:
+	# special case to ensure trailing zeros are added to the string aswell
+	# we just subtracted by c, so if c has trailing zeros we add that many to the string
+
+
+	cmpq $10, %rax		# if c < 10, exit
+	jl .Lbitoa_ret
+	
+	# else add '0' 
+	movb $48, (%rsi)
+	addq $1, %rsi
+
+	# devide c by 10 
+	divq %r10
+	
+	# and retry
+	jmp .Lbitoa6
+
+
+.Lbitoa_ret:
 	movb $0, (%rsi)		# *rsi = '\0'
 	# return rax = char*
 	movq %r11, %rax
