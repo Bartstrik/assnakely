@@ -1,42 +1,46 @@
 .text
-.globl main
-.type main, @function
+.globl _start
+.type _start, @function
 
-main:
+_start:
+	
+	# Without glibc, the input arguments argc and argv** are stored on the stack, when we enter %rsp contains a pointer to a list with [ argc, argv[0], argv[1], argv[2] ]
+	# so we care about (%rsp) = 3
+	# , 16(%rsp) = 1st arg
+	# , 24(%rsp) = 2nd arg
+	# note that they are stored before the stack pointer, so after pushing the base pointer, they will be at:
+	# 8(%rbp) = 3
+	# 24(%rbp) = 1st arg
+	# 32(%rbp) = 2nd arg
+
 	# check if argc == 3
-	cmpl 	$3, %edi
+	cmpq 	$3, (%rsp)
 	jne .Lmain_err
 
-	# allocate memory [8 bytes for int64_t val, 8 bytes for the pointer argv*[1]]
+	# allocate memory [8 bytes for int64_t val, 24 bytes for the string
+	# We are overwriting argc here, which is fine, since its been used already
 	pushq %rbp	
 	movq %rsp, %rbp
 	subq $32, %rsp
 
-	leaq 8(%rsi), %rdi 
-	movq %rdi, -8(%rbp) #-8(%rsp) contains argv*[1]
-	addq $8, %rdi
-
-	# algo
-	movq 	(%rdi), %rdi	# dereference second argument
+	movq 24(%rbp), %rdi
 	
 	# call 	atoi@PLT		# using atoi for now
 	call 	batoi
-	movq	%rax, -16(%rbp)  # moving return integer into r12w
+	movq	%rax, -8(%rbp)  # moving return integer to stack
 
 	# atoi is allowed to do whatever it wants with any of the registers rdi, rsi, rdx and rcx, rax, r8 and r9 according to the SYSTEM V AMD64 ABI	
-	movq 	-8(%rbp), %rdi	# dereference second argument into rdi
-	movq 	(%rdi), %rdi
+	movq 	32(%rbp), %rdi	# dereference second argument into rdi
 
 	#call 	atoi@PLT		# using atoi for now
 	call 	batoi
-	addq	%rax, -16(%rbp) # adding ret to edx
+	addq	%rax, -8(%rbp) # adding ret to edx
 
 	# using bitoa:
-	movq -16(%rbp), %rdi
+	movq -8(%rbp), %rdi
 	leaq -32(%rbp), %rsi		# reusing allocated stack as the string buffer
 	call bitoa
 
-	# sys_write 
 	movq %rax, %rsi			# put char* into second arg
 
 	# finding str_len 
