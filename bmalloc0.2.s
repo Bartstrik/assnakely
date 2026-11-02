@@ -1,3 +1,4 @@
+# TODO syscalls can fail (for example when out of memory), we should check for this
 .section .data
 table_ptr: .quad 0
 table_offset: .quad 0
@@ -9,7 +10,7 @@ brk_ptr: .quad 0
 .globl _start
 .type _start, @function
 
-# testing by calling bmalloc 1024 times in a row
+# testing by calling bmalloc and free 1024 times in a row with increasing size
 _start:
 pushq %rbp
 movq %rsp, %rbp
@@ -17,17 +18,22 @@ subq $16, %rsp
 
 movl $0, -8(%rbp)
 
-L_start1:
-cmpw $1024, -8(%rbp)
-ja L_start_exit
+.L_start1:
+movq -8(%rbp), %rcx
+cmpq $1024, %rcx
+ja .L_start_exit
 
-movq $512, %rdi
+movq %rcx, %rdi
+shl $3, %rdi
 call bmalloc
 
-addw $1, -8(%rbp)
-jmp L_start1
+movq %rax, %rdi
+call bfree
 
-L_start_exit:
+addq $1, -8(%rbp)
+jmp .L_start1
+
+.L_start_exit:
 ret
 
 # sys_exit 
@@ -52,7 +58,7 @@ bmalloc:
 
 # making sure size is > 0
 cmpq $0, %rdi
-jle Lbmalloc_err
+jle .Lbmalloc_err
 
 # initliaze stack
 pushq %rbp
@@ -63,12 +69,12 @@ subq $16, %rsp
 # if table_ptr != NULL 
 #	check if table has spot available
 cmpq $0, table_ptr(%rip)
-je Lbmalloc_table_find_spot
+je .Lbmalloc_table_find_spot
 
 # if brk_ptr == NULL:
 #	call sys_brk with rdi=0 to retreive brk_ptr
 cmpq $0, brk_ptr(%rip)
-jne	Lbmalloc_skip_brk_init
+jne	.Lbmalloc_skip_brk_init
 
 # store rdi temporarily on the stack
 movq %rdi, -8(%rbp)
@@ -91,12 +97,13 @@ movq %rdi, -16(%rbp)
 addq brk_ptr(%rip), %rdi
 addq $8, %rdi
 movq %rdi, -8(%rbp)
+
 movq $12, %rax
 syscall
 
 # if unsuccesful, err
 cmpq $0, %rax 
-jne Lbmalloc_err
+jne .Lbmalloc_err
 
 # if succesful, update brk_ptr and 
 movq -8(%rbp), %rax
@@ -110,6 +117,9 @@ movq %rcx, (%rax)
 
 # and setting rax to the memory address by incrementing again
 addq 8, %rax
+
+.Lbmalloc_table_find_spot:
+# TODO
 
 .Lbmalloc_exit:
 leave
@@ -131,20 +141,20 @@ movq %rdi, -16(%rbp)
 # if table_ptr == NULL
 #	call malloc with initial size (512)
 cmpq $0, table_ptr(%rip)
-jne Lbfree_skip_table_init
+je .Lbfree_table_init
 
-movq $512, %rdi
-call malloc
 
-# error check
-cmpq $-1, %rax
-je Lbfree_err
+.Lbfree_table_size_check:
+# first we check if the table is full
 
-# storing table pointer
-movq %rax, table_ptr(%rip)
-movq $512, table_size(%rip)
+# if table_offset * 8 >= table_size
+# increase table_size
+movq table_offset(%rip), %rsi
+imulq $8, %rsi
+cmp %rsi, table_size(%rip)
+jl .Lbfree_increase_table_size0
 
-Lbfree_skip_table_init:
+.Lbfree_main:
 # storing size in table_ptr + table_offset * 8
 # and freed pointer in table_ptr + table_offset * 8 + 8
 
@@ -168,10 +178,70 @@ movq -8(%rbp), %rsi
 # incrementing offset by 2
 addq $2, table_offset(%rip)
 
-# TODO add check for table_offset == table_size
-# if True, call malloc with 2 * table size move table to new local and store old table size+ptr in table and update table_ptr finally.
+jmp .Lbfree_exit
 
+.Lbfree_table_init:
+movq $512, %rdi
+call bmalloc
 
+# error check
+cmpq $-1, %rax
+je .Lbfree_err
+
+# storing table pointer
+movq %rax, table_ptr(%rip)
+movq $512, table_size(%rip)
+jmp .Lbfree_table_size_check
+
+.Lbfree_increase_table_size0:
+# call malloc with 2 * table size 
+movq table_size(%rip), %rdi
+shl $1, %rdi
+call bmalloc
+
+# move table to new memory
+
+# store table_prt and table_ptr + table_offset
+movq table_ptr(%rip), %rdi
+movq table_offset(%rip), %rcx
+imulq $8, %rcx
+addq %rdi, %rcx
+
+# temporary storage of old table_ptr
+movq %rdi, %r8
+# store new table_ptr
+movq %rax, table_ptr(%rip)
+
+.Lbfree_increase_table_size1:
+# if the pointers match, we reached the end
+cmp %rdi, %rcx
+je .Lbfree_increase_table_size1 
+
+# copy values
+movq (%rdi), %rdx
+movq %rdx, (%rax)
+
+addq $8, %rdi
+addq $8, %rax
+
+jmp .Lbfree_increase_table_size1
+
+.Lbfree_increase_table_size2:
+
+# store old table size+ptr in table aswell 
+movq table_size(%rip), %rcx
+movq %rcx, (%rax)
+addq $8, %rax
+
+movq %r8, %rcx
+movq %rcx, (%rax)
+
+# update table_offset and table_size (table_ptr was updated earlier)
+addq $2, table_offset(%rip)
+movq table_size(%rip), %rcx
+shl $1, %rcx
+
+jmp .Lbfree_main
 
 .Lbfree_exit:
 leave
