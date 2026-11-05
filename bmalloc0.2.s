@@ -10,28 +10,29 @@ brk_ptr: .quad 0
 .globl _start
 .type _start, @function
 
-# testing by calling bmalloc and free 1024 times in a row with increasing size
+# testing by calling bmalloc and free 256 times in a row until the 8 bit value unsigned integer overflows and starts again
+# then maybe I can check and count how many times the overflow bit has been set as a debug variable
+
 _start:
 pushq %rbp
 movq %rsp, %rbp
 subq $16, %rsp
 
-movl $0, -8(%rbp)
-
 .L_start1:
-movq -8(%rbp), %rcx
-cmpq $1024, %rcx
-ja .L_start_exit
+movb $1, %r11b
 
-movq %rcx, %rdi
-shl $3, %rdi
+.L_start2:
+movq $0, %rdi
+movb %r11b, %dil
+
 call bmalloc
 
 movq %rax, %rdi
 call bfree
 
-addq $1, -8(%rbp)
-jmp .L_start1
+addb $1, %r11b
+jo .L_start1	# overflow check
+jmp .L_start2
 
 .L_start_exit:
 ret
@@ -69,7 +70,7 @@ subq $16, %rsp
 # if table_ptr != NULL 
 #	check if table has spot available
 cmpq $0, table_ptr(%rip)
-je .Lbmalloc_table_find_spot
+je .Lbmalloc_table_find_spot0
 
 # if brk_ptr == NULL:
 #	call sys_brk with rdi=0 to retreive brk_ptr
@@ -117,9 +118,31 @@ movq %rcx, (%rax)
 
 # and setting rax to the memory address by incrementing again
 addq 8, %rax
+jmp .Lbmalloc_exit
 
-.Lbmalloc_table_find_spot:
-# TODO
+.Lbmalloc_table_find_spot0:
+movq table_ptr(%rip), %rcx
+movq table_offset(%rip), %rdx
+addq %rcx, %rdx
+
+.Lbmalloc_table_find_spot1:
+#if the tables end is reached, we simply run malloc normally
+cmpq %rcx, %rdx
+je .Lbmalloc_skip_brk_init
+
+# if size is less then requested,
+# try next entry in table
+cmpq (%rcx), %rdi
+jae .Lbmalloc_table_find_spot2
+
+# else simply return the pointer in the table
+movq 8(%rdi), %rax
+jmp .Lbmalloc_exit
+
+.Lbmalloc_table_find_spot2:
+addq $16, %rcx
+jmp .Lbmalloc_table_find_spot1
+
 
 .Lbmalloc_exit:
 leave
@@ -135,7 +158,7 @@ bfree:
 
 # store the pointer in -8(%rbp) and the size at -16(%rbp)
 movq %rdi, -8(%rbp)
-subq -8, %rdi
+subq $8, %rdi
 movq %rdi, -16(%rbp)
 
 # if table_ptr == NULL
@@ -181,7 +204,7 @@ addq $2, table_offset(%rip)
 jmp .Lbfree_exit
 
 .Lbfree_table_init:
-movq $512, %rdi
+movq $128, %rdi
 call bmalloc
 
 # error check
@@ -190,7 +213,7 @@ je .Lbfree_err
 
 # storing table pointer
 movq %rax, table_ptr(%rip)
-movq $512, table_size(%rip)
+movq $128, table_size(%rip)
 jmp .Lbfree_table_size_check
 
 .Lbfree_increase_table_size0:
