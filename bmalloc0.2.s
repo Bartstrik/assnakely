@@ -65,18 +65,54 @@ jle .Lbmalloc_err
 pushq %rbp
 movq %rsp, %rbp
 subq $16, %rsp
-# -8(%rbp) = temp_size
+# -8(%rbp) = size
+# -16(%rbp) = brk_ptr
 
 # if table_ptr != NULL 
 #	check if table has spot available
 cmpq $0, table_ptr(%rip)
-je .Lbmalloc_table_find_spot0
+jne .Lbmalloc_table_find_spot0
 
 # if brk_ptr == NULL:
 #	call sys_brk with rdi=0 to retreive brk_ptr
 cmpq $0, brk_ptr(%rip)
-jne	.Lbmalloc_skip_brk_init
+je	.Lbmalloc_brk_ptr_init
 
+
+.Lbmalloc_main0:
+# storing size at -8(%rbp), 
+# then incrementing rdi by the brk_ptr, 
+# then incrementing by 8 to make space for the size variable aswell 
+# then storing the new brk_ptr at -16(%rbp), and calling sys_brk
+movq %rdi, -8(%rbp)
+addq brk_ptr(%rip), %rdi
+addq $8, %rdi
+movq %rdi, -16(%rbp)
+
+movq $12, %rax
+syscall
+
+# On failure, the system call returns the current break. 
+# On success, the system call returns the new program break
+# if unsuccesful, err
+cmpq -16(%rbp), %rax 
+jne .Lbmalloc_err
+
+# if succesful, update brk_ptr and 
+movq -16(%rbp), %rax
+movq %rax, brk_ptr(%rip)
+
+# store the size into the first 64-bits of the allocated memory, by decrementing size + 8
+subq -8(%rbp), %rax
+subq $8, %rax
+movq -8(%rbp), %rcx
+movq %rcx, (%rax)
+
+# and setting rax to the memory address by incrementing again
+addq $8, %rax
+jmp .Lbmalloc_exit
+
+.Lbmalloc_brk_ptr_init:
 # store rdi temporarily on the stack
 movq %rdi, -8(%rbp)
 
@@ -88,37 +124,8 @@ syscall
 # storing current brk_ptr and restoring original rdi val
 movq %rax, brk_ptr(%rip)
 movq -8(%rbp), %rdi
+jmp .Lbmalloc_main0
 
-.Lbmalloc_skip_brk_init:
-# storing size at -16(%rbp), 
-# then incrementing rdi by the brk_ptr, 
-# then incrementing by 8 to make space for the size variable aswell 
-# then storing the new brk_ptr at -8(%rbp), and calling sys_brk
-movq %rdi, -16(%rbp)
-addq brk_ptr(%rip), %rdi
-addq $8, %rdi
-movq %rdi, -8(%rbp)
-
-movq $12, %rax
-syscall
-
-# if unsuccesful, err
-cmpq $0, %rax 
-jne .Lbmalloc_err
-
-# if succesful, update brk_ptr and 
-movq -8(%rbp), %rax
-movq %rax, brk_ptr(%rip)
-
-# store the size into the first byte of the allocated memory, by decrementing size + 8
-subq -16(%rbp), %rax
-subq 8, %rax
-movq -16(%rbp), %rcx
-movq %rcx, (%rax)
-
-# and setting rax to the memory address by incrementing again
-addq 8, %rax
-jmp .Lbmalloc_exit
 
 .Lbmalloc_table_find_spot0:
 movq table_ptr(%rip), %rcx
@@ -128,7 +135,7 @@ addq %rcx, %rdx
 .Lbmalloc_table_find_spot1:
 #if the tables end is reached, we simply run malloc normally
 cmpq %rcx, %rdx
-je .Lbmalloc_skip_brk_init
+je .Lbmalloc_main0
 
 # if size is less then requested,
 # try next entry in table
@@ -140,7 +147,7 @@ movq 8(%rdi), %rax
 jmp .Lbmalloc_exit
 
 .Lbmalloc_table_find_spot2:
-addq $16, %rcx
+addq $2, %rcx
 jmp .Lbmalloc_table_find_spot1
 
 
@@ -156,10 +163,18 @@ ret
 bfree:
 # rdi holds the pointer
 
-# store the pointer in -8(%rbp) and the size at -16(%rbp)
-movq %rdi, -8(%rbp)
-subq $8, %rdi
+# initliaze stack
+pushq %rbp
+movq %rsp, %rbp
+subq $16, %rsp
+# -8(%rbp) = size
+# -16(%rbp) = ptr
+
+# store the size in -8(%rbp) and the pointer at -16(%rbp)
 movq %rdi, -16(%rbp)
+subq $8, %rdi
+movq (%rdi), %rcx
+movq %rcx, -8(%rbp)
 
 # if table_ptr == NULL
 #	call malloc with initial size (512)
@@ -189,14 +204,14 @@ addq %rsi, %rcx
 
 # store size
 movq (%rcx), %rsi
-movq -16(%rbp), %rsi
+movq -8(%rbp), %rsi
 
 # incrementing the pointer by 8
 addq $8, %rcx
 
 # and storing freed pointer
 movq (%rcx), %rsi
-movq -8(%rbp), %rsi
+movq -16(%rbp), %rsi
 
 # incrementing offset by 2
 addq $2, table_offset(%rip)
@@ -238,7 +253,7 @@ movq %rax, table_ptr(%rip)
 .Lbfree_increase_table_size1:
 # if the pointers match, we reached the end
 cmp %rdi, %rcx
-je .Lbfree_increase_table_size1 
+je .Lbfree_increase_table_size2 
 
 # copy values
 movq (%rdi), %rdx
