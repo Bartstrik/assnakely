@@ -19,22 +19,23 @@ movq %rsp, %rbp
 subq $16, %rsp
 
 .L_start1:
-movb $1, %r11b
+movq $1, -8(%rbp)
 
 .L_start2:
 movq $0, %rdi
-movb %r11b, %dil
+movb -8(%rbp), %dil
 
 call bmalloc
 
 movq %rax, %rdi
 call bfree
 
-addb $1, %r11b
+addb $1, -8(%rbp)
 jo .L_start1	# overflow check
 jmp .L_start2
 
 .L_start_exit:
+leave
 ret
 
 # sys_exit 
@@ -130,6 +131,7 @@ jmp .Lbmalloc_main0
 .Lbmalloc_table_find_spot0:
 movq table_ptr(%rip), %rcx
 movq table_offset(%rip), %rdx
+imulq $8, %rdx
 addq %rcx, %rdx
 
 .Lbmalloc_table_find_spot1:
@@ -140,14 +142,14 @@ je .Lbmalloc_main0
 # if size is less then requested,
 # try next entry in table
 cmpq (%rcx), %rdi
-jae .Lbmalloc_table_find_spot2
+ja .Lbmalloc_table_find_spot2
 
 # else simply return the pointer in the table
-movq 8(%rdi), %rax
+movq 8(%rcx), %rax
 jmp .Lbmalloc_exit
 
 .Lbmalloc_table_find_spot2:
-addq $2, %rcx
+addq $16, %rcx
 jmp .Lbmalloc_table_find_spot1
 
 
@@ -156,7 +158,7 @@ leave
 ret
 
 .Lbmalloc_err:
-movq $-1, %rax
+movq $0, %rax
 leave
 ret
 
@@ -219,12 +221,16 @@ addq $2, table_offset(%rip)
 jmp .Lbfree_exit
 
 .Lbfree_table_init:
-movq $128, %rdi
+movq $136, %rdi
 call bmalloc
 
 # error check
 cmpq $-1, %rax
 je .Lbfree_err
+
+# setting the size in the 8 bytes before the table starts (so that the memory can be reused after table is increased and freed)
+movq $128, (%rax)
+addq $8, %rax
 
 # storing table pointer
 movq %rax, table_ptr(%rip)
@@ -237,23 +243,29 @@ movq table_size(%rip), %rdi
 shl $1, %rdi
 call bmalloc
 
+# error check
+cmpq $0, %rax
+je .Lbfree_err
+
 # move table to new memory
 
-# store table_prt and table_ptr + table_offset
+# store table_ptr and table_ptr + table_offset
 movq table_ptr(%rip), %rdi
 movq table_offset(%rip), %rcx
+subq $2, %rcx	#decrement by one because offset is pointing to next open space in table
 imulq $8, %rcx
 addq %rdi, %rcx
 
 # temporary storage of old table_ptr
 movq %rdi, %r8
+
 # store new table_ptr
 movq %rax, table_ptr(%rip)
 
+# looping from old table_ptr (rdi) to old table_ptr + table_offset * 8 (rcx)
 .Lbfree_increase_table_size1:
-# if the pointers match, we reached the end
-cmp %rdi, %rcx
-je .Lbfree_increase_table_size2 
+cmp %rcx, %rdi
+ja .Lbfree_increase_table_size2 
 
 # copy values
 movq (%rdi), %rdx
@@ -271,13 +283,13 @@ movq table_size(%rip), %rcx
 movq %rcx, (%rax)
 addq $8, %rax
 
-movq %r8, %rcx
-movq %rcx, (%rax)
+movq %r8, (%rax)
 
 # update table_offset and table_size (table_ptr was updated earlier)
 addq $2, table_offset(%rip)
 movq table_size(%rip), %rcx
 shl $1, %rcx
+movq %rcx, table_size(%rip)
 
 jmp .Lbfree_main
 
