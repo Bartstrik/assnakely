@@ -46,11 +46,11 @@ syscall
 
 # bmalloc works by storing the size of the allocated data in the 8 bytes before the void pointer returned by bmalloc
 
-# when bfree is called it simply copies the size and pointer into a table which can then be used by bmalloc to allocate new datasections
+# when bfree is called it simply copies the pointer into a table which can then be used by bmalloc to allocate new datasections
 
 # this table is also allocated on the heap using bmalloc and works as a dynamic array. 
 # When it is full, it doubles its size, calls bmalloc, copies itself to the newly allocated memory, 
-# and adds the previous ptable and tablesize to the table, and finally updates the table pointer
+# and adds the previous pointer to table to the table, and finally updates the table pointer
 
 
 
@@ -141,17 +141,32 @@ je .Lbmalloc_main0
 
 # if size is less then requested,
 # try next entry in table
-cmpq (%rcx), %rdi
+movq (%rcx), %rsi
+cmpq -8(%rsi), %rdi
 ja .Lbmalloc_table_find_spot2
 
 # else simply return the pointer in the table
-movq 8(%rcx), %rax
-jmp .Lbmalloc_exit
+# TODO and remove the pointer from table + shift rest
+movq %rsi, %rax
+jmp .Lbmalloc_table_shift
 
 .Lbmalloc_table_find_spot2:
-addq $16, %rcx
+addq $8, %rcx
 jmp .Lbmalloc_table_find_spot1
 
+.Lbmalloc_table_shift:
+# rcx still points to the element that needs to be removed
+# rdx still points to the end of the table 
+addq $8, %rcx
+
+# return if finished copying
+cmp %rcx, %rdx
+je .Lbmalloc_exit
+
+# else 
+movq (%rcx), %rsi
+movq %rsi, -8(%rcx)
+jmp .Lbmalloc_table_shift
 
 .Lbmalloc_exit:
 leave
@@ -179,7 +194,7 @@ movq (%rdi), %rcx
 movq %rcx, -8(%rbp)
 
 # if table_ptr == NULL
-#	call malloc with initial size (512)
+#	call malloc with initial size (128)
 cmpq $0, table_ptr(%rip)
 je .Lbfree_table_init
 
@@ -195,8 +210,7 @@ cmp %rsi, table_size(%rip)
 jl .Lbfree_increase_table_size0
 
 .Lbfree_main:
-# storing size in table_ptr + table_offset * 8
-# and freed pointer in table_ptr + table_offset * 8 + 8
+# storing rdi pointer in table_ptr + table_offset * 8
 
 # calculating table_ptr + table_offset * 8
 movq table_ptr(%rip), %rcx
@@ -204,19 +218,13 @@ movq table_offset(%rip), %rsi
 imul $8, %rsi
 addq %rsi, %rcx
 
-# store size
-movq (%rcx), %rsi
-movq -8(%rbp), %rsi
 
-# incrementing the pointer by 8
-addq $8, %rcx
-
-# and storing freed pointer
+# storing freed pointer
 movq (%rcx), %rsi
 movq -16(%rbp), %rsi
 
-# incrementing offset by 2
-addq $2, table_offset(%rip)
+# incrementing offset by 1
+addq $1, table_offset(%rip)
 
 jmp .Lbfree_exit
 
@@ -278,15 +286,11 @@ jmp .Lbfree_increase_table_size1
 
 .Lbfree_increase_table_size2:
 
-# store old table size+ptr in table aswell 
-movq table_size(%rip), %rcx
-movq %rcx, (%rax)
-addq $8, %rax
-
+# store old table ptr in table aswell 
 movq %r8, (%rax)
 
 # update table_offset and table_size (table_ptr was updated earlier)
-addq $2, table_offset(%rip)
+addq $1, table_offset(%rip)
 movq table_size(%rip), %rcx
 shl $1, %rcx
 movq %rcx, table_size(%rip)
